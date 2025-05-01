@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Экосистема</title>
+    <style>
+        body {
+            margin: 0;
+            background: #90c980;
+            font-family: Arial, sans-serif;
+        }
+        #ui {
+            position: fixed;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(255, 255, 255, 0.95);
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 0 10px rgba(0,0,0,0.2);
+            z-index: 100;
+        }
+        .input-group {
+            margin: 10px;
+        }
+        label {
+            display: inline-block;
+            width: 120px;
+            text-align: right;
+            margin-right: 10px;
+        }
+        input[type="number"] {
+            width: 60px;
+            padding: 5px;
+        }
+        button {
+            margin-top: 15px;
+            padding: 10px 20px;
+            font-size: 16px;
+            cursor: pointer;
+            border: none;
+            border-radius: 5px;
+            background: #4CAF50;
+            color: white;
+        }
+        canvas {
+            display: block;
+            background: #90c980;
+        }
+    </style>
+</head>
+<body>
+    <div id="ui">
+        <div class="input-group">
+            <label for="herbivoreCount">Травоядные:</label>
+            <input type="number" id="herbivoreCount" min="1" max="50" value="5">
+        </div>
+        <div class="input-group">
+            <label for="predatorCount">Хищники:</label>
+            <input type="number" id="predatorCount" min="1" max="30" value="3">
+        </div>
+        <button onclick="startGame()">Начать игру</button>
+    </div>
+
+    <canvas id="gameCanvas"></canvas>
+
+    <script>
+        const IMAGE_PATHS = {
+            HERBIVORE: '‪herbivore.png',
+            PREDATOR: '‪predator.png',
+            PLANT: 'plant.png'
+        };
+
+        let canvas, ctx;
+        let herbivores = [];
+        let predators = [];
+        let plants = [];
+        let imagesLoaded = false;
+
+        function preloadImages(callback) {
+            const images = {};
+            const imageNames = Object.keys(IMAGE_PATHS);
+            let loadedCount = 0;
+
+            imageNames.forEach(key => {
+                images[key] = new Image();
+                images[key].src = IMAGE_PATHS[key];
+                images[key].onload = () => {
+                    loadedCount++;
+                    if (loadedCount === imageNames.length) {
+                        callback(images);
+                    }
+                };
+                images[key].onerror = () => {
+                    alert(`Ошибка загрузки изображения: ${IMAGE_PATHS[key]}`);
+                };
+            });
+        }
+
+        function startGame() {
+            const herbivoreCount = parseInt(document.getElementById('herbivoreCount').value);
+            const predatorCount = parseInt(document.getElementById('predatorCount').value);
+
+            if (herbivoreCount <= 0 || predatorCount <= 0) {
+                alert("Количество должно быть больше нуля");
+                return;
+            }
+
+            document.getElementById('ui').style.display = 'none';
+
+            initGame();
+            preloadImages(images => {
+                createInitialObjects(images, herbivoreCount, predatorCount);
+                startGameLoop(images);
+            });
+        }
+
+        function initGame() {
+            canvas = document.getElementById('gameCanvas');
+            ctx = canvas.getContext('2d');
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+
+            window.addEventListener('resize', () => {
+                canvas.width = window.innerWidth;
+                canvas.height = window.innerHeight;
+            });
+        }
+
+        function createInitialObjects(images, herbivoreCount, predatorCount) {
+            herbivores = [];
+            predators = [];
+            plants = [];
+
+            for (let i = 0; i < herbivoreCount; i++) {
+                herbivores.push(new Herbivore(
+                    Math.random() * canvas.width,
+                    Math.random() * canvas.height,
+                    images.HERBIVORE
+                ));
+            }
+
+            for (let i = 0; i < predatorCount; i++) {
+                predators.push(new Predator(
+                    Math.random() * canvas.width,
+                    Math.random() * canvas.height,
+                    images.PREDATOR
+                ));
+            }
+
+            generatePlants(images);
+        }
+
+        function generatePlants(images) {
+            while (plants.length < 8) {
+                plants.push(new Plant(
+                    Math.random() * (canvas.width - 40) + 20,
+                    Math.random() * (canvas.height - 40) + 20,
+                    images.PLANT
+                ));
+            }
+        }
+
+        // Основной игровой цикл
+        function gameLoop(images) {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            [herbivores, predators, plants].forEach(group => {
+                group.forEach(obj => {
+                    if (obj instanceof Herbivore || obj instanceof Predator) {
+                        let targets = obj.targetType === Plant ? plants : herbivores;
+
+                        let nearest = null;
+                        let minDist = obj.viewRadius;
+
+                        targets.forEach(target => {
+                            if (target !== obj && obj.distanceTo(target) < minDist) {
+                                minDist = obj.distanceTo(target);
+                                nearest = target;
+                            }
+                        });
+
+                        if (nearest) {
+                            const angle = Math.atan2(nearest.y - obj.y, nearest.x - obj.x);
+                            obj.vx = Math.cos(angle) * 1.5;
+                            obj.vy = Math.sin(angle) * 1.5;
+
+                            if (minDist < obj.size + nearest.size) {
+                                obj.attack(nearest);
+                                if (obj instanceof Herbivore && nearest instanceof Predator) {
+                                    nearest.attack(obj, 2);
+                                }
+                            }
+                        } else {
+                            obj.move();
+                        }
+                    }
+
+                    obj.draw();
+                });
+            });
+
+            // Удаление мертвых
+            [herbivores, predators, plants].forEach(group => {
+                for (let i = group.length - 1; i >= 0; i--) {
+                    if (group[i].health <= 0) {
+                        group.splice(i, 1);
+                    }
+                }
+            });
+
+            // Размножение травоядных
+            herbivores.forEach(h => {
+                if (!h.lastBreed) h.lastBreed = Date.now();
+                if (Date.now() - h.lastBreed > 60000) {
+                    herbivores.push(new Herbivore(h.x + Math.random() * 20 - 10, h.y + Math.random() * 20 - 10, images.HERBIVORE));
+                    h.lastBreed = Date.now();
+                }
+            });
+
+            generatePlants(images);
+        }
+
+        function startGameLoop(images) {
+            // Обновление 30 раз в секунду (~33 мс)
+            const interval = setInterval(() => {
+                if (imagesLoaded) {
+                    gameLoop(images);
+                }
+            }, 1000 / 30);
+
+            // requestAnimationFrame для точного контроля
+            function loop() {
+                requestAnimationFrame(loop);
+            }
+            loop();
+        }
+
+        class GameObject {
+            constructor(x, y, size, image) {
+                this.x = x;
+                this.y = y;
+                this.size = size;
+                this.image = image;
+                this.vx = (Math.random() - 0.5) * 2;
+                this.vy = (Math.random() - 0.5) * 2;
+                this.health = 50;
+            }
+
+            draw() {
+                if (this.image && this.image.complete) {
+                    ctx.drawImage(this.image, this.x - this.size, this.y - this.size, this.size * 2, this.size * 2);
+                }
+            }
+
+            move() {
+                this.x += this.vx;
+                this.y += this.vy;
+
+                if (this.x < this.size || this.x > canvas.width - this.size) this.vx *= -1;
+                if (this.y < this.size || this.y > canvas.height - this.size) this.vy *= -1;
+            }
+
+            distanceTo(obj) {
+                return Math.hypot(this.x - obj.x, this.y - obj.y);
+            }
+
+            attack(target) {
+                target.health -= this.attackPower;
+            }
+        }
+
+        class Herbivore extends GameObject {
+            constructor(x, y, image) {
+                super(x, y, 15, image);
+                this.health = 50;
+                this.attackPower = 5;
+                this.viewRadius = this.size * 5;
+                this.targetType = Plant;
+            }
+        }
+
+        class Predator extends GameObject {
+            constructor(x, y, image) {
+                super(x, y, 20, image);
+                this.health = 70;
+                this.attackPower = 5;
+                this.viewRadius = this.size * 5;
+                this.targetType = Herbivore;
+            }
+        }
+
+        class Plant extends GameObject {
+            constructor(x, y, image) {
+                super(x, y, Math.floor(Math.random() * 3 + 1) * 10, image);
+                this.health = this.size === 10 ? 5 : this.size === 20 ? 10 : 15;
+            }
+
+            move() {}
+        }
+
+        // Подтверждение загрузки изображений
+        preloadImages(() => {
+            imagesLoaded = true;
+        });
+    </script>
+</body>
+</html>
